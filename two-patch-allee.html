@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Two patches, coupled by dispersal</title>
+<!--
+  Two patches with a threshold (Allee) local dynamic, linked by dispersal:
+
+      dx1/dt = x1(1 - x1)(x1 - alpha) + (D/2)(x2 - x1)
+      dx2/dt = x2(1 - x2)(x2 - alpha) + (D/2)(x1 - x2)
+
+  After Amarasekare (2000), The geometry of coexistence, Fig. 1.
+  Self-contained: no libraries, no build step. Colours are CSS variables.
+
+  Click the plot to displace the state and watch where it goes.
+-->
+<style>
+  :root {
+    --bg:      #0b1015;
+    --panel:   #131a22;
+    --line:    #1f2a35;
+    --grid:    rgba(148,180,210,0.07);
+    --axis:    rgba(160,190,215,0.45);
+    --arrow:   150,190,225;   /* rgb triple; alpha is set per-arrow */
+    --nc1:     #4ade80;       /* dx1/dt = 0 */
+    --nc2:     #60a5fa;       /* dx2/dt = 0 */
+    --skel:    rgba(190,205,220,0.30);
+    --diag:    rgba(148,163,184,0.22);
+    --stable:  #ffffff;
+    --coex:    #f0abfc;
+    --saddle:  #f472b6;
+    --traj:    251,191,36;    /* rgb triple; the trajectory fades along its length */
+    --text:    #cbd5e1;
+    --muted:   #8b9bad;
+  }
+
+  .tp-fig {
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    max-width: 560px;
+    margin: 0 auto;
+  }
+  .tp-fig * { box-sizing: border-box; }
+
+  .tp-plot {
+    position: relative;
+    width: 100%;
+    max-width: 460px;          /* the figure gives up a little room to the equations */
+    margin: 0 auto;
+    aspect-ratio: 1 / 1;
+  }
+  .tp-plot canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+  .tp-eqn {
+    display: grid;
+    grid-template-columns: auto auto;   /* aligns the two equations on the "=" */
+    justify-content: center;
+    column-gap: 0.4em;
+    row-gap: 0.3em;
+    font-family: "Iowan Old Style", Palatino, Georgia, serif;
+    font-style: italic;
+    font-size: clamp(14px, 3.6vw, 18px);
+    margin: 2px 0 18px;
+    color: var(--text);
+  }
+  .tp-eqn i { font-style: italic; }
+  .tp-eqn .lhs { text-align: right; }
+
+  .tp-controls {
+    display: grid;
+    gap: 12px;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+  }
+  .tp-row { display: grid; grid-template-columns: 3.2em 1fr 3.6em; align-items: center; gap: 10px; }
+  .tp-row label {
+    font-family: "Iowan Old Style", Palatino, Georgia, serif;
+    font-style: italic;
+    font-size: 16px;
+  }
+  .tp-row label small {
+    display: block;
+    font-family: inherit;
+    font-style: normal;
+    font-size: 10.5px;
+    color: var(--muted);
+    line-height: 1.2;
+  }
+  .tp-row output { font-variant-numeric: tabular-nums; text-align: right; font-size: 13px; }
+  .tp-row input[type=range] { width: 100%; accent-color: var(--nc2); }
+
+  .tp-hint {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    font-size: 11.5px; color: var(--muted); padding-top: 2px;
+  }
+  .tp-hint button {
+    font: inherit; color: var(--muted); background: none;
+    border: 0; padding: 0; cursor: pointer; text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .tp-hint button:hover { color: var(--text); }
+
+  .tp-legend {
+    display: flex; flex-wrap: wrap; gap: 6px 16px;
+    margin-top: 12px; font-size: 11.5px; color: var(--muted);
+  }
+  .tp-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .tp-swatch { width: 16px; height: 2px; border-radius: 1px; }
+  .tp-dot { width: 9px; height: 9px; border-radius: 50%; }
+</style>
+
+<div class="tp-fig">
+  <div class="tp-eqn">
+    <span class="lhs">dx<sub>1</sub>/dt</span>
+    <span>= x<sub>1</sub>(1 &minus; x<sub>1</sub>)(x<sub>1</sub> &minus; &alpha;) + (D/2)(x<sub>2</sub> &minus; x<sub>1</sub>)</span>
+    <span class="lhs">dx<sub>2</sub>/dt</span>
+    <span>= x<sub>2</sub>(1 &minus; x<sub>2</sub>)(x<sub>2</sub> &minus; &alpha;) + (D/2)(x<sub>1</sub> &minus; x<sub>2</sub>)</span>
+  </div>
+
+  <div class="tp-plot"><canvas id="tp-canvas"></canvas></div>
+
+  <div class="tp-controls">
+    <div class="tp-row">
+      <label for="tp-D">D<small>dispersal</small></label>
+      <input id="tp-D" type="range" min="0" max="1" step="0.002" value="0.1">
+      <output id="tp-D-out">0.100</output>
+    </div>
+    <div class="tp-row">
+      <label for="tp-a">&alpha;<small>threshold</small></label>
+      <input id="tp-a" type="range" min="0.1" max="0.9" step="0.01" value="0.5">
+      <output id="tp-a-out">0.50</output>
+    </div>
+    <div class="tp-hint">
+      <span>Click the plot to displace the state.</span>
+      <button id="tp-clear" type="button">clear</button>
+    </div>
+  </div>
+
+  <div class="tp-legend">
+    <span><i class="tp-swatch" style="background:var(--nc1)"></i>dx<sub>1</sub>/dt = 0</span>
+    <span><i class="tp-swatch" style="background:var(--nc2)"></i>dx<sub>2</sub>/dt = 0</span>
+    <span><i class="tp-dot" style="background:var(--stable)"></i>stable</span>
+    <span><i class="tp-dot" style="background:var(--coex)"></i>both patches occupied</span>
+    <span style="color:var(--saddle)">&times;&nbsp;<span style="color:var(--muted)">saddle</span></span>
+    <span><i class="tp-dot" style="border:1.5px solid var(--stable)"></i>unstable</span>
+    <span><i class="tp-swatch" style="background:repeating-linear-gradient(90deg,var(--skel) 0 3px,transparent 3px 6px)"></i>D = 0 skeleton</span>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var XMAX = 1.06;                       // a little past carrying capacity
+  // Sample the nullclines from slightly below zero. The lines x = 0 and y = 0
+  // are nullclines, and marching squares cannot see a contour lying exactly on
+  // the edge of its sampling grid, so the grid has to start outside the plot.
+  var XMIN = -0.05;
+  var M = { l: 46, r: 14, t: 14, b: 38 };  // plot margins, px
+
+  var canvas = document.getElementById("tp-canvas");
+  var ctx = canvas.getContext("2d");
+  var bg = document.createElement("canvas");   // static layers, redrawn only on change
+  var bctx = bg.getContext("2d");
+
+  var inD = document.getElementById("tp-D");
+  var inA = document.getElementById("tp-a");
+  var outD = document.getElementById("tp-D-out");
+  var outA = document.getElementById("tp-a-out");
+  var btnClear = document.getElementById("tp-clear");
+
+  var P = { D: +inD.value, a: +inA.value };
+  var W = 0, H = 0, PW = 0, PH = 0;
+  var state = null, trail = [], raf = null, idle = 0;
+
+  function css(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+  function sx(x) { return M.l + (x / XMAX) * PW; }
+  function sy(y) { return H - M.b - (y / XMAX) * PH; }
+
+  /* ------------------------------ the model ------------------------------ */
+
+  function field(x, y, p) {
+    return [
+      x * (1 - x) * (x - p.a) + (p.D / 2) * (y - x),
+      y * (1 - y) * (y - p.a) + (p.D / 2) * (x - y)
+    ];
+  }
+
+  function rk4(x, y, p, dt) {
+    var k1 = field(x, y, p);
+    var k2 = field(x + dt / 2 * k1[0], y + dt / 2 * k1[1], p);
+    var k3 = field(x + dt / 2 * k2[0], y + dt / 2 * k2[1], p);
+    var k4 = field(x + dt * k3[0], y + dt * k3[1], p);
+    return [x + dt / 6 * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]),
+            y + dt / 6 * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1])];
+  }
+
+  function jac(x, y, p) {
+    var h = 1e-6;
+    var a = field(x + h, y, p), b = field(x - h, y, p);
+    var c = field(x, y + h, p), d = field(x, y - h, p);
+    return [
+      [(a[0] - b[0]) / (2 * h), (c[0] - d[0]) / (2 * h)],
+      [(a[1] - b[1]) / (2 * h), (c[1] - d[1]) / (2 * h)]
+    ];
+  }
+
+  function classify(x, y, p) {
+    var J = jac(x, y, p);
+    var T = J[0][0] + J[1][1];
+    var Dt = J[0][0] * J[1][1] - J[0][1] * J[1][0];
+    if (Dt < -1e-9) return "saddle";
+    return T < -1e-9 ? "stable" : "unstable";
+  }
+
+  /* marching squares over one component; each segment remembers its cell,
+     so the two nullclines can be intersected cheaply to find equilibria */
+  function nullcline(comp, p, n) {
+    n = n || 104;
+    var span = XMAX - XMIN;
+    var g = function (k) { return XMIN + (k / n) * span; };
+    var v = new Float64Array((n + 1) * (n + 1)), i, j;
+    for (j = 0; j <= n; j++) {
+      for (i = 0; i <= n; i++) {
+        var val = field(g(i), g(j), p)[comp];
+        v[j * (n + 1) + i] = isFinite(val) ? val : 0;
+      }
+    }
+    var segs = [];
+    for (j = 0; j < n; j++) {
+      for (i = 0; i < n; i++) {
+        var x0 = g(i), x1 = g(i + 1);
+        var y0 = g(j), y1 = g(j + 1);
+        var a = v[j * (n + 1) + i],
+            b = v[j * (n + 1) + i + 1],
+            c = v[(j + 1) * (n + 1) + i + 1],
+            d = v[(j + 1) * (n + 1) + i];
+        var cr = [];
+        function edge(va, vb, ax, ay, bx, by) {
+          if ((va > 0) !== (vb > 0)) {
+            var t = va / (va - vb);
+            cr.push([ax + t * (bx - ax), ay + t * (by - ay)]);
+          }
+        }
+        edge(a, b, x0, y0, x1, y0);
+        edge(b, c, x1, y0, x1, y1);
+        edge(c, d, x1, y1, x0, y1);
+        edge(d, a, x0, y1, x0, y0);
+        if (cr.length === 2) segs.push({ a: cr[0], b: cr[1], cell: j * n + i });
+      }
+    }
+    return segs;
+  }
+
+  function segCross(s1, s2) {
+    var x1 = s1.a[0], y1 = s1.a[1], x2 = s1.b[0], y2 = s1.b[1];
+    var x3 = s2.a[0], y3 = s2.a[1], x4 = s2.b[0], y4 = s2.b[1];
+    var den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+    if (Math.abs(den) < 1e-14) return null;
+    var t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
+    var u = ((x1 - x3) * (y1 - y2) - (y1 - y3) * (x1 - x2)) / den;
+    if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+    return [x1 + t * (x2 - x1), y1 + t * (y2 - y1)];
+  }
+
+  function equilibria(nc0, nc1, p) {
+    var byCell = {}, i, k;
+    for (i = 0; i < nc1.length; i++) {
+      (byCell[nc1[i].cell] || (byCell[nc1[i].cell] = [])).push(nc1[i]);
+    }
+    var out = [];
+    for (i = 0; i < nc0.length; i++) {
+      var list = byCell[nc0[i].cell];
+      if (!list) continue;
+      for (k = 0; k < list.length; k++) {
+        var c = segCross(nc0[i], list[k]);
+        if (!c) continue;
+        var x = c[0], y = c[1], ok = true;
+        for (var it = 0; it < 8; it++) {         // Newton polish
+          var J = jac(x, y, p), F = field(x, y, p);
+          var det = J[0][0] * J[1][1] - J[0][1] * J[1][0];
+          if (Math.abs(det) < 1e-13) break;
+          x -= (J[1][1] * F[0] - J[0][1] * F[1]) / det;
+          y -= (-J[1][0] * F[0] + J[0][0] * F[1]) / det;
+          if (!isFinite(x) || !isFinite(y)) { ok = false; break; }
+        }
+        if (!ok || x < -0.01 || y < -0.01 || x > XMAX || y > XMAX) continue;
+        var dup = false;
+        for (var q = 0; q < out.length; q++) {
+          if (Math.hypot(out[q].x - x, out[q].y - y) < 0.008) { dup = true; break; }
+        }
+        if (dup) continue;
+        var kind = classify(x, y, p);
+        out.push({
+          x: Math.max(0, x), y: Math.max(0, y), kind: kind,
+          /* the object of interest: stable, both patches occupied, patches unequal */
+          coex: kind === "stable" && x > 0.01 && y > 0.01 && Math.abs(x - y) > 0.01
+        });
+      }
+    }
+    return out;
+  }
+
+  /* -------------------- static layers, drawn on change -------------------- */
+
+  function rebuild() {
+    var g = bctx, i, j;
+    g.fillStyle = css("--bg");
+    g.fillRect(0, 0, W, H);
+
+    g.strokeStyle = css("--grid");
+    g.lineWidth = 1;
+    g.beginPath();
+    for (i = 1; i <= 5; i++) {
+      g.moveTo(sx(i / 5), M.t);  g.lineTo(sx(i / 5), H - M.b);
+      g.moveTo(M.l, sy(i / 5));  g.lineTo(W - M.r, sy(i / 5));
+    }
+    g.stroke();
+
+    /* the synchronised state, x1 = x2 */
+    g.save();
+    g.setLineDash([3, 5]);
+    g.strokeStyle = css("--diag");
+    g.lineWidth = 1.2;
+    g.beginPath(); g.moveTo(sx(0), sy(0)); g.lineTo(sx(XMAX), sy(XMAX)); g.stroke();
+    g.restore();
+
+    /* vector field */
+    var NX = Math.max(10, Math.round(PW / 32)), NY = Math.max(10, Math.round(PH / 32));
+    var pts = [], vmax = 1e-12;
+    for (i = 0; i < NX; i++) {
+      for (j = 0; j < NY; j++) {
+        var x = ((i + 0.5) / NX) * XMAX, y = ((j + 0.5) / NY) * XMAX;
+        var v = field(x, y, P);
+        var dxp = (v[0] / XMAX) * PW, dyp = -(v[1] / XMAX) * PH;
+        var sp = Math.hypot(dxp, dyp);
+        if (sp > vmax) vmax = sp;
+        pts.push([sx(x), sy(y), dxp, dyp, sp]);
+      }
+    }
+    var maxLen = Math.min(PW / NX, PH / NY) * 0.8;
+    var arrowRGB = css("--arrow");
+    for (i = 0; i < pts.length; i++) {
+      var px = pts[i][0], py = pts[i][1], sd = pts[i][4];
+      if (sd < 1e-9) continue;
+      var rel = Math.pow(sd / vmax, 0.4);
+      var len = maxLen * Math.min(1, Math.max(0.12, rel));
+      var ux = (pts[i][2] / sd) * len, uy = (pts[i][3] / sd) * len;
+      g.strokeStyle = "rgba(" + arrowRGB + "," + (0.16 + 0.5 * rel) + ")";
+      g.lineWidth = 1.1;
+      g.beginPath();
+      g.moveTo(px - ux / 2, py - uy / 2);
+      g.lineTo(px + ux / 2, py + uy / 2);
+      g.stroke();
+      var ah = Math.min(5, Math.max(2, len * 0.34)), ang = Math.atan2(uy, ux);
+      g.fillStyle = "rgba(" + arrowRGB + "," + (0.2 + 0.55 * rel) + ")";
+      g.beginPath();
+      g.moveTo(px + ux / 2, py + uy / 2);
+      g.lineTo(px + ux / 2 - ah * Math.cos(ang - 0.42), py + uy / 2 - ah * Math.sin(ang - 0.42));
+      g.lineTo(px + ux / 2 - ah * Math.cos(ang + 0.42), py + uy / 2 - ah * Math.sin(ang + 0.42));
+      g.closePath();
+      g.fill();
+    }
+
+    /* the D = 0 skeleton: three lines crossed by three lines */
+    g.save();
+    g.setLineDash([4, 4]);
+    g.strokeStyle = css("--skel");
+    g.lineWidth = 1.2;
+    g.beginPath();
+    [0, P.a, 1].forEach(function (u) {
+      g.moveTo(sx(u), sy(0)); g.lineTo(sx(u), sy(XMAX));
+      g.moveTo(sx(0), sy(u)); g.lineTo(sx(XMAX), sy(u));
+    });
+    g.stroke();
+    g.restore();
+
+    /* nullclines */
+    var nc0 = nullcline(0, P), nc1 = nullcline(1, P);
+    function strokeSegs(segs, colour) {
+      g.strokeStyle = colour;
+      g.lineWidth = 2;
+      g.beginPath();
+      for (var q = 0; q < segs.length; q++) {
+        g.moveTo(sx(segs[q].a[0]), sy(segs[q].a[1]));
+        g.lineTo(sx(segs[q].b[0]), sy(segs[q].b[1]));
+      }
+      g.stroke();
+    }
+    g.save();                       // sampling runs past the axes; drawing must not
+    g.beginPath();
+    g.rect(M.l, M.t, PW, PH);
+    g.clip();
+    strokeSegs(nc0, css("--nc1"));
+    strokeSegs(nc1, css("--nc2"));
+    g.restore();
+
+    /* equilibria */
+    var eqs = equilibria(nc0, nc1, P);
+    for (i = 0; i < eqs.length; i++) {
+      var e = eqs[i], ex = sx(e.x), ey = sy(e.y);
+      if (e.kind === "saddle") {
+        g.strokeStyle = css("--saddle");
+        g.lineWidth = 2.2;
+        g.beginPath();
+        g.moveTo(ex - 4.5, ey - 4.5); g.lineTo(ex + 4.5, ey + 4.5);
+        g.moveTo(ex + 4.5, ey - 4.5); g.lineTo(ex - 4.5, ey + 4.5);
+        g.stroke();
+      } else if (e.kind === "stable") {
+        if (e.coex) {
+          g.fillStyle = css("--coex");
+          g.beginPath(); g.arc(ex, ey, 6, 0, 7); g.fill();
+          g.strokeStyle = css("--coex");
+          g.globalAlpha = 0.45; g.lineWidth = 1.5;
+          g.beginPath(); g.arc(ex, ey, 10.5, 0, 7); g.stroke();
+          g.globalAlpha = 1;
+        } else {
+          g.fillStyle = css("--stable");
+          g.beginPath(); g.arc(ex, ey, 5.2, 0, 7); g.fill();
+        }
+      } else {
+        g.strokeStyle = css("--stable");
+        g.lineWidth = 1.8;
+        g.fillStyle = css("--bg");
+        g.beginPath(); g.arc(ex, ey, 4.8, 0, 7); g.fill(); g.stroke();
+      }
+    }
+
+    /* axes */
+    g.strokeStyle = css("--axis");
+    g.lineWidth = 1.2;
+    g.beginPath();
+    g.moveTo(M.l, M.t); g.lineTo(M.l, H - M.b); g.lineTo(W - M.r, H - M.b);
+    g.stroke();
+
+    g.fillStyle = css("--muted");
+    g.font = "11px ui-sans-serif, system-ui, sans-serif";
+    g.textAlign = "center";
+    for (i = 0; i <= 5; i++) g.fillText((i / 5).toFixed(1), sx(i / 5), H - M.b + 15);
+    g.textAlign = "right";
+    for (i = 0; i <= 5; i++) g.fillText((i / 5).toFixed(1), M.l - 7, sy(i / 5) + 4);
+
+    g.fillStyle = css("--text");
+    g.font = "12px ui-sans-serif, system-ui, sans-serif";
+    g.textAlign = "center";
+    g.fillText("patch 1   x\u2081", M.l + PW / 2, H - 6);
+    g.save();
+    g.translate(12, M.t + PH / 2);
+    g.rotate(-Math.PI / 2);
+    g.fillText("patch 2   x\u2082", 0, 0);
+    g.restore();
+  }
+
+  /* ---------------------- the state, drawn each frame ---------------------- */
+
+  function paint() {
+    ctx.drawImage(bg, 0, 0, W, H);
+    if (!state) return;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(M.l, M.t, PW, PH);
+    ctx.clip();
+
+    var trajRGB = css("--traj");
+    if (trail.length > 1) {                   // fade the trail along its length
+      var bands = 8, per = Math.ceil(trail.length / bands);
+      for (var k = 0; k < bands; k++) {
+        var i0 = k * per, i1 = Math.min(trail.length, i0 + per + 1);
+        if (i1 - i0 < 2) continue;
+        ctx.strokeStyle = "rgba(" + trajRGB + "," + (0.07 + 0.73 * ((k + 1) / bands)) + ")";
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        for (var i = i0; i < i1; i++) {
+          var px = sx(trail[i][0]), py = sy(trail[i][1]);
+          if (i === i0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+      }
+    }
+
+    var cx = sx(state[0]), cy = sy(state[1]);
+    var glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, 15);
+    glow.addColorStop(0, "rgba(" + trajRGB + ",0.45)");
+    glow.addColorStop(1, "rgba(" + trajRGB + ",0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(cx, cy, 15, 0, 7); ctx.fill();
+    ctx.fillStyle = "#fffbeb";
+    ctx.beginPath(); ctx.arc(cx, cy, 5, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+
+  function step() {
+    raf = null;
+    if (state) {
+      var x = state[0], y = state[1];
+      for (var i = 0; i < 10; i++) {
+        var n = rk4(x, y, P, 0.02);
+        x = n[0]; y = n[1];
+      }
+      if (isFinite(x) && isFinite(y)) {
+        state = [x, y];
+        trail.push([x, y]);
+        if (trail.length > 700) trail.shift();
+      }
+      var v = field(state[0], state[1], P);
+      idle = Math.hypot(v[0], v[1]) < 2e-4 ? idle + 1 : 0;
+    }
+    paint();
+    if (state && idle < 40) raf = requestAnimationFrame(step);   // park when settled
+  }
+
+  function run() {
+    idle = 0;
+    if (!raf) raf = requestAnimationFrame(step);
+  }
+
+  /* ------------------------------- plumbing ------------------------------- */
+
+  canvas.addEventListener("pointerdown", function (ev) {
+    var r = canvas.getBoundingClientRect();
+    var x = ((ev.clientX - r.left - M.l) / PW) * XMAX;
+    var y = ((r.height - M.b - (ev.clientY - r.top)) / PH) * XMAX;
+    state = [Math.min(XMAX, Math.max(0, x)), Math.min(XMAX, Math.max(0, y))];
+    trail = [];
+    run();
+  });
+
+  btnClear.addEventListener("click", function () {
+    state = null; trail = [];
+    if (raf) { cancelAnimationFrame(raf); raf = null; }
+    paint();
+  });
+
+  function onParam() {
+    P.D = +inD.value;
+    P.a = +inA.value;
+    outD.textContent = P.D.toFixed(3);
+    outA.textContent = P.a.toFixed(2);
+    rebuild();
+    if (state) run(); else paint();   // the field moved under the state; let it fall again
+  }
+  inD.addEventListener("input", onParam);
+  inA.addEventListener("input", onParam);
+
+  function resize() {
+    var box = canvas.parentNode;
+    W = box.clientWidth || 480;
+    H = box.clientHeight || 480;
+    PW = W - M.l - M.r;
+    PH = H - M.t - M.b;
+    var dpr = window.devicePixelRatio || 1;
+    canvas.width = bg.width = Math.round(W * dpr);
+    canvas.height = bg.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    rebuild();
+    if (state) run(); else paint();
+  }
+
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(canvas.parentNode);
+  window.addEventListener("resize", resize);
+  resize();
+})();
+</script>
